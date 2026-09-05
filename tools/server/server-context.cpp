@@ -3292,6 +3292,19 @@ private:
             return;
         }
 
+        // A recurrent memory has no attention KV to pair the recurrent state with,
+        // so a PARTIAL_ONLY blob for it is exactly the recurrent state alone.
+        // The restore sites skip the load for the same reason
+        // (llama_memory_hybrid::seq_pos_max is min(attn_max, recr_max) and attn_max
+        // is -1 there, so nothing can advance n_past over a [0, n_sys) prefix). Skip
+        // the write here too so the on-disk index does not accumulate 157 MB entries
+        // per cold start that no consumer can use. Making the cache work for these
+        // models needs the attention half in the blob, which is a format change.
+        if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS) {
+            slot_sys_hash[slot.id] = 1;  // mark as checked, nothing to do
+            return;
+        }
+
         int n_sys = kv_detect_system_prompt_boundary(
             llama_model_get_vocab(llama_get_model(ctx_tgt)),
             tokens.data(),
