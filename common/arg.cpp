@@ -2429,6 +2429,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_REPACK"));
     add_opt(common_arg(
+        {"-muge", "--merge-up-gate-experts"},
+        string_format("whether to merge ffn_up_exps and ffn_gate_exps tensors at load time (default: %s)", params.merge_up_gate_exps ? "enabled" : "disabled"),
+        [](common_params & params) {
+            params.merge_up_gate_exps = true;
+        }
+    ).set_env("LLAMA_ARG_MERGE_UP_GATE_EXPS"));
+    add_opt(common_arg(
         {"--no-host"},
         "bypass host buffer allowing extra buffers to be used",
         [](common_params & params) {

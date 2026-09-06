@@ -1729,7 +1729,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         // a lazy context is mapped whatever the load mode, but the memory-fit pass maps nothing
         const bool is_lazy_mapped = ctx_key.lazy && !ml.no_alloc;
 
-        if ((ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+        // merged gate_up tensors are repacked after loading, so zero-copy mapping does not work for their context
+        if ((ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft && !ml.has_merged_ctx(ctx)) {
             GGML_ASSERT(!ml.no_alloc);
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
@@ -1827,6 +1828,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         if (!ml.load_all_data(ctx, buf_map, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
             return false;
         }
+    }
+
+    if (ml.merge_up_gate_exps) {
+        ml.repack_merged_gate_up();
     }
 
     if (use_mmap_buffer) {
@@ -2759,6 +2764,7 @@ llama_model_params llama_model_default_params() {
         /*.no_host                     =*/ false,
         /*.no_alloc                    =*/ false,
         /*.load_mtp                    =*/ false,
+        /*.merge_up_gate_exps          =*/ false,
     };
 
     return result;
@@ -3206,8 +3212,16 @@ ggml_tensor * llama_model_base::create_tensor(const LLM_TN_IMPL & tn, const std:
 void llama_model_base::create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_, int64_t n_ff_, int64_t n_expert_, int flags) {
     layer.ffn_gate_up_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", bid), {n_embd_, n_ff_ * 2, n_expert_}, TENSOR_NOT_REQUIRED);
     if (layer.ffn_gate_up_exps == nullptr) {
-        layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
-        layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
+        if (ml->merge_up_gate_exps && flags == 0) {
+            const buft_list_t * buft_list_layer = bid == -1 ? nullptr : pimpl->dev_layer.at(bid).buft_list;
+            layer.ffn_gate_up_exps = ml->merge_ffn_gate_up_exps(
+                hparams, &pimpl->cpu_buft_list, pimpl->dev_input.buft_list, pimpl->dev_output.buft_list, buft_list_layer,
+                tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", bid), tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", bid), tn(LLM_TENSOR_FFN_UP_EXPS, "weight", bid));
+        }
+        if (layer.ffn_gate_up_exps == nullptr) {
+            layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
+            layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
+        }
     }
 }
 

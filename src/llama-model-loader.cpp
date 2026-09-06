@@ -540,9 +540,11 @@ llama_model_loader::llama_model_loader(
         bool check_tensors,
         bool no_alloc,
         bool load_mtp,
+        bool merge_up_gate_exps,
         const llama_model_kv_override * param_overrides_p,
         const llama_model_tensor_buft_override * param_tensor_buft_overrides_p)
         : metadata(meta), set_tensor_data(set_tensor_data), set_tensor_data_ud(set_tensor_data_ud) {
+    this->merge_up_gate_exps = merge_up_gate_exps;
     int trace = 0;
     if (getenv("LLAMA_TRACE")) {
         trace = atoi(getenv("LLAMA_TRACE"));
@@ -1106,13 +1108,7 @@ bool llama_model_loader::lazy_read::add(const std::string & name, const ggml_ten
     return true;
 }
 
-struct ggml_tensor * llama_model_loader::create_tensor(
-        const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
-        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) {
-    // set below, before buft_for_tensor() runs
-    bool is_lazy = false;
-
-    auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
+ggml_context * llama_model_loader::ctx_for_buft(ggml_backend_buffer_type_t buft, const llama_hparams & hparams, bool is_lazy) {
         const ctx_key key { buft, is_lazy };
 
         auto it = ctx_map.find(key);
@@ -1142,9 +1138,11 @@ struct ggml_tensor * llama_model_loader::create_tensor(
             return ctx;
         }
         return it->second.get();
-    };
+}
 
-    auto buft_for_tensor = [&](ggml_tensor * t_meta) -> ggml_backend_buffer_type_t {
+ggml_backend_buffer_type_t llama_model_loader::buft_for_tensor(
+        const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
+        const buft_list_t * buft_list_layer, ggml_tensor * t_meta, const LLM_TN_IMPL & tn, int flags, bool is_lazy) {
         if (!t_meta) {
             if (flags & TENSOR_NOT_REQUIRED) {
                 return nullptr;
@@ -1280,6 +1278,95 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         }
 
         return buft;
+}
+
+struct ggml_tensor * llama_model_loader::merge_ffn_gate_up_exps(
+        const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
+        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_gate, const LLM_TN_IMPL & tn_up) {
+    if (!merge_up_gate_exps) {
+        return nullptr;
+    }
+
+    const auto * w_gate = get_weight(tn_gate.str().c_str());
+    const auto * w_up   = get_weight(tn_up.str().c_str());
+    if (!w_gate || !w_up) {
+        return nullptr;
+    }
+
+    const ggml_tensor * g = w_gate->tensor;
+    const ggml_tensor * u = w_up->tensor;
+
+    if (g->type != u->type || g->ne[0] != u->ne[0] || g->ne[1] != u->ne[1] || g->ne[2] != u->ne[2]) {
+        LLAMA_LOG_DEBUG("%s: not merging layer %d tensor %s: type or shape mismatch\n", __func__, tn_gate.bid, tn_merged.str().c_str());
+        return nullptr;
+    }
+
+    ggml_backend_buffer_type_t buft = buft_for_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
+            buft_list_layer, (ggml_tensor *) g, tn_gate, 0, false);
+    if (!buft) {
+        return nullptr;
+    }
+
+    ggml_context * ctx = ctx_for_buft(buft, hparams, false);
+
+    // base layout per expert: [gate | up], as expected by build_moe_ffn
+    ggml_tensor * base = ggml_new_tensor_3d(ctx, g->type, g->ne[0], 2*g->ne[1], g->ne[2]);
+    ggml_set_name(base, tn_merged.str().c_str());
+
+    has_merged_gate_up = true;
+    merged_ctxs.insert(ctx);
+    merged_gate_up_tensors.push_back({ base, w_gate, w_up, ggml_nbytes(g)/g->ne[2] });
+
+    // the file has two tensors (gate, up), but only one is created
+    n_tensors--;
+    n_created++;
+
+    LLAMA_LOG_INFO("%s: merged gate/up experts into %s\n", __func__, tn_merged.str().c_str());
+
+    return base;
+}
+
+void llama_model_loader::repack_merged_gate_up() {
+    if (merged_gate_up_tensors.empty()) {
+        return;
+    }
+
+    const int64_t t_start = ggml_time_us();
+
+    std::vector<uint8_t> buf;
+    for (auto & m : merged_gate_up_tensors) {
+        GGML_ASSERT(m.base->data != nullptr);
+
+        const int64_t n_expert = m.base->ne[2];
+        for (int64_t e = 0; e < n_expert; e++) {
+            buf.resize(m.slice);
+
+            const void * pg = load_data_range(*m.w_gate, e*m.slice, m.slice, buf.data());
+            ggml_backend_tensor_set(m.base, pg, 2*m.slice*e, m.slice);
+
+            const void * pu = load_data_range(*m.w_up, e*m.slice, m.slice, buf.data());
+            ggml_backend_tensor_set(m.base, pu, 2*m.slice*e + m.slice, m.slice);
+        }
+
+        size_done += 2*m.slice*n_expert;
+    }
+
+    LLAMA_LOG_INFO("%s: repacked %zu merged gate/up tensors in %.3f ms\n", __func__,
+            merged_gate_up_tensors.size(), (double) (ggml_time_us() - t_start) / 1000.0);
+}
+
+struct ggml_tensor * llama_model_loader::create_tensor(
+        const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
+        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) {
+    // set below, before buft_for_tensor() runs
+    bool is_lazy = false;
+
+    auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
+        return this->ctx_for_buft(buft, hparams, is_lazy);
+    };
+
+    auto buft_for_tensor = [&](ggml_tensor * t_meta) -> ggml_backend_buffer_type_t {
+        return this->buft_for_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output, buft_list_layer, t_meta, tn, flags, is_lazy);
     };
 
     if (files.empty()) {
