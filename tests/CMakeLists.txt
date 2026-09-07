@@ -309,6 +309,8 @@ set_tests_properties(test-thread-safety PROPERTIES FIXTURES_REQUIRED test-downlo
 llama_build_and_test(test-arg-parser.cpp)
 llama_build_and_test(test-model-resolution.cpp)
 llama_build_and_test(test-kv-ssd-user-isolation.cpp)
+# Pure unit test for the in-memory ring buffer checkpoint acceptance
+llama_build_and_test(test-checkpoint-predicate.cpp)
 if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     # residency uses internal symbols not exported by the Windows shared lib
     llama_build_and_test(test-moe-residency-routing.cpp)
