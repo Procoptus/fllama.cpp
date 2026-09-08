@@ -2436,6 +2436,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_MERGE_UP_GATE_EXPS"));
     add_opt(common_arg(
+        {"-mqkv", "--merge-qkv"},
+        string_format("whether to merge wq, wk, wv tensors at load time (default: %s)", params.merge_qkv ? "enabled" : "disabled"),
+        [](common_params & params) {
+            params.merge_qkv = true;
+        }
+    ).set_env("LLAMA_ARG_MERGE_QKV"));
+    add_opt(common_arg(
         {"--no-host"},
         "bypass host buffer allowing extra buffers to be used",
         [](common_params & params) {

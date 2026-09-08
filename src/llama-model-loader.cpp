@@ -541,10 +541,12 @@ llama_model_loader::llama_model_loader(
         bool no_alloc,
         bool load_mtp,
         bool merge_up_gate_exps,
+        bool merge_qkv,
         const llama_model_kv_override * param_overrides_p,
         const llama_model_tensor_buft_override * param_tensor_buft_overrides_p)
         : metadata(meta), set_tensor_data(set_tensor_data), set_tensor_data_ud(set_tensor_data_ud) {
     this->merge_up_gate_exps = merge_up_gate_exps;
+    this->merge_qkv = merge_qkv;
     int trace = 0;
     if (getenv("LLAMA_TRACE")) {
         trace = atoi(getenv("LLAMA_TRACE"));
@@ -1324,6 +1326,143 @@ struct ggml_tensor * llama_model_loader::merge_ffn_gate_up_exps(
     LLAMA_LOG_INFO("%s: merged gate/up experts into %s\n", __func__, tn_merged.str().c_str());
 
     return base;
+}
+
+struct ggml_tensor * llama_model_loader::merge_ffn_qkv(
+        const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
+        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_q, const LLM_TN_IMPL & tn_k, const LLM_TN_IMPL & tn_v, ggml_tensor ** bias_out) {
+    if (!merge_qkv) {
+        return nullptr;
+    }
+
+    const auto * wq = get_weight(tn_q.str().c_str());
+    const auto * wk = get_weight(tn_k.str().c_str());
+    const auto * wv = get_weight(tn_v.str().c_str());
+    if (!wq || !wk || !wv) {
+        return nullptr;
+    }
+
+    const ggml_tensor * q = wq->tensor;
+    const ggml_tensor * k = wk->tensor;
+    const ggml_tensor * v = wv->tensor;
+
+    if (q->type != k->type || q->type != v->type || q->ne[0] != k->ne[0] || q->ne[0] != v->ne[0]) {
+        LLAMA_LOG_DEBUG("%s: not merging layer %d tensor %s: type or shape mismatch\n", __func__, tn_q.bid, tn_merged.str().c_str());
+        return nullptr;
+    }
+
+    if (q->ne[1] < 1 || k->ne[1] < 1 || v->ne[1] < 1) {
+        return nullptr;
+    }
+
+    // build a name of the same tensor with a different suffix
+    auto with_suffix = [](const LLM_TN_IMPL & tn, const char * suffix) {
+        return LLM_TN_IMPL(tn.arch, tn.tensor, suffix, tn.bid, tn.xid);
+    };
+
+    // per-tensor scale companions belong to the individual weights and cannot be merged
+    for (const LLM_TN_IMPL * tn : { &tn_q, &tn_k, &tn_v }) {
+        if (get_weight(with_suffix(*tn, "scale").str().c_str()) || get_weight(with_suffix(*tn, "input_scale").str().c_str())) {
+            LLAMA_LOG_DEBUG("%s: not merging layer %d tensor %s: scale tensors present\n", __func__, tn_q.bid, tn_merged.str().c_str());
+            return nullptr;
+        }
+    }
+
+    // merge the biases only if all three are present and are plain f32 vectors
+    const auto * bq = get_weight(with_suffix(tn_q, "bias").str().c_str());
+    const auto * bk = get_weight(with_suffix(tn_k, "bias").str().c_str());
+    const auto * bv = get_weight(with_suffix(tn_v, "bias").str().c_str());
+
+    const int n_bias = (bq != nullptr) + (bk != nullptr) + (bv != nullptr);
+    if (n_bias != 0 && n_bias != 3) {
+        LLAMA_LOG_DEBUG("%s: not merging layer %d tensor %s: partial biases\n", __func__, tn_q.bid, tn_merged.str().c_str());
+        return nullptr;
+    }
+    if (n_bias == 3) {
+        for (const ggml_tensor * b : { bq->tensor, bk->tensor, bv->tensor }) {
+            if (b->type != GGML_TYPE_F32 || b->ne[1] != 1 || b->ne[2] != 1) {
+                LLAMA_LOG_DEBUG("%s: not merging layer %d tensor %s: unexpected bias\n", __func__, tn_q.bid, tn_merged.str().c_str());
+                return nullptr;
+            }
+        }
+    }
+
+    ggml_backend_buffer_type_t buft = buft_for_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
+            buft_list_layer, (ggml_tensor *) q, tn_q, 0, false);
+    if (!buft) {
+        return nullptr;
+    }
+
+    ggml_context * ctx = ctx_for_buft(buft, hparams, false);
+
+    // base layout: [q | k | v], as expected by build_qkv
+    ggml_tensor * base = ggml_new_tensor_2d(ctx, q->type, q->ne[0], q->ne[1] + k->ne[1] + v->ne[1]);
+    ggml_set_name(base, tn_merged.str().c_str());
+
+    ggml_tensor * bias = nullptr;
+    if (n_bias == 3) {
+        bias = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, bq->tensor->ne[0] + bk->tensor->ne[0] + bv->tensor->ne[0]);
+        ggml_set_name(bias, with_suffix(tn_merged, "bias").str().c_str());
+    }
+
+    has_merged_qkv = true;
+    merged_ctxs.insert(ctx);
+    merged_qkv_tensors.push_back({ base, bias, wq, wk, wv, bq, bk, bv, { ggml_nbytes(q), ggml_nbytes(k), ggml_nbytes(v) } });
+
+    // the file has three tensors (q, k, v), but only one is created
+    n_tensors -= 2;
+    n_created++;
+
+    if (bias) {
+        n_tensors -= 2;
+        n_created++;
+    }
+
+    LLAMA_LOG_INFO("%s: merged q/k/v into %s\n", __func__, tn_merged.str().c_str());
+
+    *bias_out = bias;
+
+    return base;
+}
+
+void llama_model_loader::repack_merged_qkv() {
+    if (merged_qkv_tensors.empty()) {
+        return;
+    }
+
+    const int64_t t_start = ggml_time_us();
+
+    std::vector<uint8_t> buf;
+    for (auto & m : merged_qkv_tensors) {
+        GGML_ASSERT(m.base->data != nullptr);
+
+        const llama_tensor_weight * src[3] = { m.wq, m.wk, m.wv };
+        size_t offset = 0;
+        for (int i = 0; i < 3; i++) {
+            const size_t nbytes = m.qkv[i];
+            buf.resize(nbytes);
+            const void * p = load_data_range(*src[i], 0, nbytes, buf.data());
+            ggml_backend_tensor_set(m.base, p, offset, nbytes);
+            offset += nbytes;
+            size_done += nbytes;
+        }
+
+        if (m.bias) {
+            const llama_tensor_weight * bsrc[3] = { m.bq, m.bk, m.bv };
+            offset = 0;
+            for (int i = 0; i < 3; i++) {
+                const size_t nbytes = ggml_nbytes(bsrc[i]->tensor);
+                buf.resize(nbytes);
+                const void * p = load_data_range(*bsrc[i], 0, nbytes, buf.data());
+                ggml_backend_tensor_set(m.bias, p, offset, nbytes);
+                offset += nbytes;
+                size_done += nbytes;
+            }
+        }
+    }
+
+    LLAMA_LOG_INFO("%s: repacked %zu merged qkv tensors in %.3f ms\n", __func__,
+            merged_qkv_tensors.size(), (double) (ggml_time_us() - t_start) / 1000.0);
 }
 
 void llama_model_loader::repack_merged_gate_up() {

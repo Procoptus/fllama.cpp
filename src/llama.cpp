@@ -322,8 +322,14 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
             params.merge_up_gate_exps = false;
         }
 
+        if (params.merge_qkv && params.split_mode != LLAMA_SPLIT_MODE_NONE && params.split_mode != LLAMA_SPLIT_MODE_LAYER) {
+            LLAMA_LOG_WARN("%s: --merge-qkv is not supported with tensor/row split mode\n", __func__);
+            LLAMA_LOG_WARN("  => turning off --merge-qkv\n");
+            params.merge_qkv = false;
+        }
+
         llama_model_loader ml(metadata, set_tensor_data, set_tensor_data_ud, fname, splits, file, params.load_mode,
-            params.check_tensors, params.no_alloc, params.load_mtp, params.merge_up_gate_exps, params.kv_overrides, params.tensor_buft_overrides);
+            params.check_tensors, params.no_alloc, params.load_mtp, params.merge_up_gate_exps, params.merge_qkv, params.kv_overrides, params.tensor_buft_overrides);
 
         ml.lazy.mode = params.lazy_mode;
 

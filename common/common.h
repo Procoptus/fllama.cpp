@@ -582,6 +582,7 @@ struct common_params {
     bool no_extra_bufts    = false; // disable extra buffer types (used for weight repacking)
     bool no_host           = false; // bypass host buffer allowing extra buffers to be used
     bool merge_up_gate_exps = false; // merge ffn_up_exps and ffn_gate_exps at load time
+    bool merge_qkv = false; // merge wq, wk, wv tensors at load time
 
     bool single_turn       = false; // single turn chat conversation
 

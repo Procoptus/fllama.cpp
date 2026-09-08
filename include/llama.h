@@ -348,6 +348,7 @@ extern "C" {
         bool no_alloc;        // only load metadata and simulate memory allocations
         bool load_mtp;        // whether to load MTP layers
         bool merge_up_gate_exps; // merge ffn_up_exps and ffn_gate_exps into a single tensor at load time
+        bool merge_qkv; // merge wq, wk, wv into a single qkv tensor at load time
     };
 
     struct llama_sampler_seq_config {
