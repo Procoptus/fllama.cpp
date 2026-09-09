@@ -1836,10 +1836,6 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         ml.repack_merged_gate_up();
     }
 
-    if (ml.merge_qkv) {
-        ml.repack_merged_qkv();
-    }
-
     if (use_mmap_buffer) {
         for (auto & mapping : ml.mappings) {
             pimpl->mappings.emplace_back(std::move(mapping));
@@ -3265,11 +3261,19 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
         if (ml->merge_qkv && flags == 0 && hparams.f_attention_scale == 0.0f) {
             const buft_list_t * buft_list_layer = bid == -1 ? nullptr : pimpl->dev_layer.at(bid).buft_list;
             ggml_tensor * qkv_b = nullptr;
+            ggml_tensor * wq_v = nullptr;
+            ggml_tensor * wk_v = nullptr;
+            ggml_tensor * wv_v = nullptr;
             ggml_tensor * wqkv = ml->merge_ffn_qkv(
                 hparams, &pimpl->cpu_buft_list, pimpl->dev_input.buft_list, pimpl->dev_output.buft_list, buft_list_layer,
-                tn(LLM_TENSOR_ATTN_QKV, "weight", bid), tn(LLM_TENSOR_ATTN_Q, "weight", bid), tn(LLM_TENSOR_ATTN_K, "weight", bid), tn(LLM_TENSOR_ATTN_V, "weight", bid), &qkv_b);
+                tn(LLM_TENSOR_ATTN_QKV, "weight", bid), tn(LLM_TENSOR_ATTN_Q, "weight", bid), tn(LLM_TENSOR_ATTN_K, "weight", bid), tn(LLM_TENSOR_ATTN_V, "weight", bid),
+                &qkv_b, &wq_v, &wk_v, &wv_v);
             if (wqkv) {
                 layer.wqkv = wqkv;
+                // views with the original q/k/v names keep graphs using layer.wq/wk/wv directly working
+                layer.wq = wq_v;
+                layer.wk = wk_v;
+                layer.wv = wv_v;
                 if (qkv_b) {
                     layer.wqkv_b = qkv_b;
                 } else {

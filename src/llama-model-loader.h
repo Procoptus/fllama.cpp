@@ -151,20 +151,7 @@ struct llama_model_loader {
         size_t slice; // bytes of one expert's gate (or up) slice
     };
 
-    struct merged_qkv {
-        ggml_tensor * base;                    // merged [n_embd, nq+nk+nv] weight
-        ggml_tensor * bias;                    // merged bias, nullptr if not applicable
-        const llama_tensor_weight * wq;
-        const llama_tensor_weight * wk;
-        const llama_tensor_weight * wv;
-        const llama_tensor_weight * bq; // nullptr if bias not merged
-        const llama_tensor_weight * bk;
-        const llama_tensor_weight * bv;
-        size_t qkv[3]; // bytes of the q, k, v slices
-    };
-
     std::vector<struct merged_gate_up> merged_gate_up_tensors;
-    std::vector<struct merged_qkv>     merged_qkv_tensors;
     std::set<ggml_context *>           merged_ctxs;
 
     ggml_backend_buffer_type_t buft_for_tensor(
@@ -285,14 +272,14 @@ struct llama_model_loader {
 
     // merge the q, k, v tensors of one layer into a single attn_qkv tensor
     // returns the merged tensor, or nullptr if merging is not possible (missing tensor, type mismatch, scale tensors, lazy read)
+    // q, k, v are returned as views into the merged tensor under their original names, so load_all_data
+    // fills the merged tensor by matching them to the file tensors by name, and graphs that use
+    // layer.wq/wk/wv directly keep working
     // if all three biases exist they are merged too and written to *bias_out
     struct ggml_tensor * merge_ffn_qkv(
         const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
-        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_q, const LLM_TN_IMPL & tn_k, const LLM_TN_IMPL & tn_v, ggml_tensor ** bias_out);
-
-    // after all tensor data was loaded, scatter the q/k/v slices into the merged tensors
-    // merged layout is [q | k | v], as expected by build_qkv
-    void repack_merged_qkv();
+        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_q, const LLM_TN_IMPL & tn_k, const LLM_TN_IMPL & tn_v,
+        ggml_tensor ** bias_out, ggml_tensor ** q_out, ggml_tensor ** k_out, ggml_tensor ** v_out);
 
     // true if ctx contains a merged base tensor: zero-copy mmap is not possible for it
     bool has_merged_ctx(ggml_context * ctx) const {

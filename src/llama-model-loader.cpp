@@ -1330,7 +1330,8 @@ struct ggml_tensor * llama_model_loader::merge_ffn_gate_up_exps(
 
 struct ggml_tensor * llama_model_loader::merge_ffn_qkv(
         const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
-        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_q, const LLM_TN_IMPL & tn_k, const LLM_TN_IMPL & tn_v, ggml_tensor ** bias_out) {
+        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_q, const LLM_TN_IMPL & tn_k, const LLM_TN_IMPL & tn_v,
+        ggml_tensor ** bias_out, ggml_tensor ** q_out, ggml_tensor ** k_out, ggml_tensor ** v_out) {
     if (!merge_qkv) {
         return nullptr;
     }
@@ -1399,17 +1400,40 @@ struct ggml_tensor * llama_model_loader::merge_ffn_qkv(
     ggml_tensor * base = ggml_new_tensor_2d(ctx, q->type, q->ne[0], q->ne[1] + k->ne[1] + v->ne[1]);
     ggml_set_name(base, tn_merged.str().c_str());
 
+    // q, k, v are views into the base under their original file names: load_all_data matches them by name
+    // and writes the file data into the merged buffer, graphs using layer.wq/wk/wv directly keep working
+    size_t offs[3] = { 0 };
+    offs[1] = ggml_nbytes(q);
+    offs[2] = offs[1] + ggml_nbytes(k);
+
+    const ggml_tensor * src[3] = { q, k, v };
+    ggml_tensor * dst[3] = { nullptr, nullptr, nullptr };
+    const LLM_TN_IMPL * tn_src[3] = { &tn_q, &tn_k, &tn_v };
+
+    for (int i = 0; i < 3; i++) {
+        dst[i] = ggml_view_2d(ctx, base, src[i]->ne[0], src[i]->ne[1], base->nb[1], offs[i]);
+        ggml_set_name(dst[i], tn_src[i]->str().c_str());
+    }
+
     ggml_tensor * bias = nullptr;
     if (n_bias == 3) {
         bias = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, bq->tensor->ne[0] + bk->tensor->ne[0] + bv->tensor->ne[0]);
         ggml_set_name(bias, with_suffix(tn_merged, "bias").str().c_str());
+
+        const ggml_tensor * bsrc[3] = { bq->tensor, bk->tensor, bv->tensor };
+        size_t b_offs[3] = { 0, ggml_nbytes(bsrc[0]), ggml_nbytes(bsrc[0]) + ggml_nbytes(bsrc[1]) };
+
+        // bias views carry the original bias names so load_all_data fills the merged bias
+        for (int i = 0; i < 3; i++) {
+            ggml_tensor * bv_ = ggml_view_1d(ctx, bias, bsrc[i]->ne[0], b_offs[i]);
+            ggml_set_name(bv_, with_suffix(*tn_src[i], "bias").str().c_str());
+        }
     }
 
     has_merged_qkv = true;
     merged_ctxs.insert(ctx);
-    merged_qkv_tensors.push_back({ base, bias, wq, wk, wv, bq, bk, bv, { ggml_nbytes(q), ggml_nbytes(k), ggml_nbytes(v) } });
 
-    // the file has three tensors (q, k, v), but only one is created
+    // the file has three tensors (q, k, v), but only one is created; the views are not counted
     n_tensors -= 2;
     n_created++;
 
@@ -1421,48 +1445,11 @@ struct ggml_tensor * llama_model_loader::merge_ffn_qkv(
     LLAMA_LOG_INFO("%s: merged q/k/v into %s\n", __func__, tn_merged.str().c_str());
 
     *bias_out = bias;
+    *q_out    = dst[0];
+    *k_out    = dst[1];
+    *v_out    = dst[2];
 
     return base;
-}
-
-void llama_model_loader::repack_merged_qkv() {
-    if (merged_qkv_tensors.empty()) {
-        return;
-    }
-
-    const int64_t t_start = ggml_time_us();
-
-    std::vector<uint8_t> buf;
-    for (auto & m : merged_qkv_tensors) {
-        GGML_ASSERT(m.base->data != nullptr);
-
-        const llama_tensor_weight * src[3] = { m.wq, m.wk, m.wv };
-        size_t offset = 0;
-        for (int i = 0; i < 3; i++) {
-            const size_t nbytes = m.qkv[i];
-            buf.resize(nbytes);
-            const void * p = load_data_range(*src[i], 0, nbytes, buf.data());
-            ggml_backend_tensor_set(m.base, p, offset, nbytes);
-            offset += nbytes;
-            size_done += nbytes;
-        }
-
-        if (m.bias) {
-            const llama_tensor_weight * bsrc[3] = { m.bq, m.bk, m.bv };
-            offset = 0;
-            for (int i = 0; i < 3; i++) {
-                const size_t nbytes = ggml_nbytes(bsrc[i]->tensor);
-                buf.resize(nbytes);
-                const void * p = load_data_range(*bsrc[i], 0, nbytes, buf.data());
-                ggml_backend_tensor_set(m.bias, p, offset, nbytes);
-                offset += nbytes;
-                size_done += nbytes;
-            }
-        }
-    }
-
-    LLAMA_LOG_INFO("%s: repacked %zu merged qkv tensors in %.3f ms\n", __func__,
-            merged_qkv_tensors.size(), (double) (ggml_time_us() - t_start) / 1000.0);
 }
 
 void llama_model_loader::repack_merged_gate_up() {
