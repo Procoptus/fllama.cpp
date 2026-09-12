@@ -149,6 +149,7 @@ if (LLAMA_LLGUIDANCE)
 endif ()
 
 llama_build(test-recurrent-state-rollback.cpp)
+llama_build(test-seq-rm-attn-only.cpp)
 llama_build(test-save-load-state.cpp)
 
 if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
@@ -217,6 +218,15 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         ARGS -m "${MODEL_DIR}/qwen35-dense.gguf"
     )
     set_tests_properties(test-recurrent-state-rollback PROPERTIES
+        FIXTURES_REQUIRED generate-models
+    )
+
+    llama_test(
+        test-seq-rm-attn-only
+        LABEL main
+        ARGS -m "${MODEL_DIR}/qwen35-dense.gguf"
+    )
+    set_tests_properties(test-seq-rm-attn-only PROPERTIES
         FIXTURES_REQUIRED generate-models
     )
 
@@ -303,6 +313,12 @@ set_tests_properties(test-thread-safety PROPERTIES FIXTURES_REQUIRED test-downlo
 
 llama_build_and_test(test-arg-parser.cpp)
 llama_build_and_test(test-model-resolution.cpp)
+llama_build_and_test(test-kv-ssd-user-isolation.cpp)
+if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
+    # residency uses internal symbols not exported by the Windows shared lib
+    llama_build_and_test(test-moe-residency-routing.cpp)
+    target_include_directories(test-moe-residency-routing PRIVATE ${PROJECT_SOURCE_DIR}/src)
+endif()
 # the test serves its repos from an httplib server, and the library links it privately
 target_link_libraries(test-model-resolution PRIVATE cpp-httplib)
 

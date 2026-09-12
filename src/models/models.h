@@ -1362,6 +1362,15 @@ struct llama_model_dflash : public llama_model_base {
     void load_arch_hparams(llama_model_loader & ml) override;
     void load_arch_tensors(llama_model_loader & ml) override;
 
+    // Set when dflash.decoder_arch == "laguna": draft layers follow the Laguna
+    // decoder contract (softplus attn gate, per-aux feature norms, context K/V
+    // through input_layernorm, causal noise-block attention).
+    bool decoder_laguna = false;
+
+    // Per-aux-feature RMSNorm weights stacked to [n_embd, n_aux], applied
+    // before concat + fc (Laguna drafters only).
+    ggml_tensor * aux_norm = nullptr;
+
     template <bool is_enc>
     struct graph : public llm_graph_context {
         graph(const llama_model & model, const llm_graph_params & params);
@@ -2355,7 +2364,10 @@ struct llama_model_qwen4exp : public llama_model_base {
 
     struct graph : public llm_build_delta_net_base {
         graph(const llama_model & model, const llm_graph_params & params);
-    private:
+    protected:
+        // members only, no trunk: graph_mtp builds its own single block
+        graph(const llama_model & model, const llm_graph_params & params, bool mtp);
+
         // HC replaces every layer norm: residual is [n_embd, hc, n_tokens]
         ggml_tensor * build_hc_mix(
                     ggml_tensor * x,
@@ -2403,6 +2415,10 @@ struct llama_model_qwen4exp : public llama_model_base {
 
         // padded top-k width when the gather path applies to this ubatch, otherwise 0
         int64_t qsa_gather_n_sel(int64_t n_kv, int64_t width) const;
+
+        // cached raw qsa_gather_n_sel result from the last build_qsa_top_k
+        // call, so build_attn_qsa doesn't recompute the env-gated gate
+        int64_t qsa_last_n_sel_ = 0;
 
         // the QSA cache layout inputs do not depend on the layer, only on its compress ratio,
         // so the layers sharing a ratio share one input set
@@ -2459,6 +2475,10 @@ struct llama_model_qwen4exp : public llama_model_base {
                             int   il);
 
         const llama_model & model;
+    };
+
+    struct graph_mtp : public graph {
+        graph_mtp(const llama_model & model, const llm_graph_params & params);
     };
 
     std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
