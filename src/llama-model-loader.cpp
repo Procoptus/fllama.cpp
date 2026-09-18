@@ -1647,6 +1647,10 @@ void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps
             if (mlock_mmaps) {
                 std::unique_ptr<llama_mlock> mlock_mmap(new llama_mlock());
                 mlock_mmap->init(mapping->addr());
+                if (!lazy.for_file(idx).empty()) {
+                    // these tensors stay on disk (TENSOR_GET_ROW_LAZY) - do not lock them in RAM
+                    mlock_mmap->set_skip_ranges(lazy.for_file(idx));
+                }
                 mlock_mmaps->emplace_back(std::move(mlock_mmap));
             }
             mappings.emplace_back(std::move(mapping));

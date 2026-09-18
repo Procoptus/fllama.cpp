@@ -68,6 +68,9 @@ struct llama_mlock {
 
     void init(void * ptr);
     void grow_to(size_t target_size);
+    // page-aligned byte ranges to keep out of RAM, e.g. tensors left on disk by --tensor-read-lazy.
+    // must be called after init() and before the first grow_to()
+    void set_skip_ranges(const std::vector<std::pair<size_t, size_t>> & ranges);
 
     static const bool SUPPORTED;
 

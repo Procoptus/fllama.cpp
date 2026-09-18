@@ -787,15 +787,69 @@ struct llama_mlock::impl {
         addr = ptr;
     }
 
+    // page-align (expanding outwards), sort and merge the skip ranges
+    static std::vector<std::pair<size_t, size_t>> normalize_skip_ranges(std::vector<std::pair<size_t, size_t>> ranges) {
+        const size_t page = lock_granularity();
+        for (auto & r : ranges) {
+            r.first  = r.first  & ~(page - 1);
+            r.second = (r.second + page - 1) & ~(page - 1);
+        }
+        std::sort(ranges.begin(), ranges.end());
+
+        std::vector<std::pair<size_t, size_t>> merged;
+        for (const auto & r : ranges) {
+            if (!merged.empty() && r.first <= merged.back().second) {
+                merged.back().second = std::max(merged.back().second, r.second);
+            } else {
+                merged.push_back(r);
+            }
+        }
+        return merged;
+    }
+
+    void set_skip_ranges(const std::vector<std::pair<size_t, size_t>> & ranges) {
+        GGML_ASSERT(size == 0 && "set_skip_ranges() must be called before the first grow_to()");
+        skip_ranges = normalize_skip_ranges(ranges);
+    }
+
     void grow_to(size_t target_size) {
         GGML_ASSERT(addr);
         if (failed_already) {
             return;
         }
+
         size_t granularity = lock_granularity();
         target_size = (target_size + granularity - 1) & ~(granularity - 1);
+
         if (target_size > size) {
-            if (raw_lock((uint8_t *) addr + size, target_size - size)) {
+            bool ok = true;
+            size_t pos = size;
+
+            // lock [pos, target_size) skipping the ranges that must stay paged-out
+            for (const auto & r : skip_ranges) {
+                if (r.first >= target_size) {
+                    break;
+                }
+                if (r.second <= pos) {
+                    continue;
+                }
+                if (r.first > pos) {
+                    ok = raw_lock((uint8_t *) addr + pos, r.first - pos);
+                    if (!ok) {
+                        break;
+                    }
+                }
+                pos = std::max(pos, r.second);
+                if (pos >= target_size) {
+                    break;
+                }
+            }
+
+            if (ok && pos < target_size) {
+                ok = raw_lock((uint8_t *) addr + pos, target_size - pos);
+            }
+
+            if (ok) {
                 size = target_size;
             } else {
                 failed_already = true;
@@ -803,9 +857,9 @@ struct llama_mlock::impl {
         }
     }
 
+    std::vector<std::pair<size_t, size_t>> skip_ranges;
     void * addr;
     size_t size;
-
     bool failed_already;
 };
 
@@ -814,6 +868,7 @@ llama_mlock::~llama_mlock() = default;
 
 void llama_mlock::init(void * ptr) { pimpl->init(ptr); }
 void llama_mlock::grow_to(size_t target_size) { pimpl->grow_to(target_size); }
+void llama_mlock::set_skip_ranges(const std::vector<std::pair<size_t, size_t>> & ranges) { pimpl->set_skip_ranges(ranges); }
 
 #if defined(_POSIX_MEMLOCK_RANGE) || defined(_WIN32)
 const bool llama_mlock::SUPPORTED = true;
