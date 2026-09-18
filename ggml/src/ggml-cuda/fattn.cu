@@ -221,6 +221,12 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
         }
     }
 
+    // ncols2=4 divides gqa 12 exactly, ncols2=8 does not:
+    if (use_gqa_opt && DKQ == 256 && gqa_ratio == 12 && Q->ne[1] > 2) {
+        ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 4>(ctx, dst);
+        return;
+    }
+
     // On RDNA it is preferable to minimize wasted compute vs. duplicate I/O for the mask.
     if (amd_wmma_available(cc)) {
         if (use_gqa_opt && gqa_ratio % 8 == 0) {

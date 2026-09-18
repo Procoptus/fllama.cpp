@@ -83,6 +83,10 @@ struct llama_model_loader {
     bool check_tensors;
     bool no_alloc;
     bool load_mtp;
+    bool merge_up_gate_exps = false; // merge ffn_gate_exps and ffn_up_exps into one tensor per layer at load time
+    bool has_merged_gate_up = false; // set after at least one merge; disables zero-copy mmap for merged contexts
+    bool merge_qkv = false;     // merge wq, wk, wv into one tensor per layer at load time
+    bool has_merged_qkv = false; // set after at least one merge; disables zero-copy mmap for merged contexts
 
     // handle TENSOR_READ_LAZY
     // use case: keep PLE / engrams embd tensors on disk, read them on demand
@@ -140,6 +144,22 @@ struct llama_model_loader {
     size_t size_data = 0;
     std::vector<std::pair<size_t, size_t>> mmaps_used;
 
+    struct merged_gate_up {
+        ggml_tensor * base;
+        const llama_tensor_weight * w_gate;
+        const llama_tensor_weight * w_up;
+        size_t slice; // bytes of one expert's gate (or up) slice
+    };
+
+    std::vector<struct merged_gate_up> merged_gate_up_tensors;
+    std::set<ggml_context *>           merged_ctxs;
+
+    ggml_backend_buffer_type_t buft_for_tensor(
+            const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
+            const buft_list_t * buft_list_layer, ggml_tensor * t_meta, const LLM_TN_IMPL & tn, int flags, bool is_lazy);
+
+    ggml_context * ctx_for_buft(ggml_backend_buffer_type_t buft, const llama_hparams & hparams, bool is_lazy);
+
     // define a comparator for the buft -> ctx map to ensure that the order is well-defined:
     struct ggml_backend_buft_comparator {
         bool operator()(const ggml_backend_buffer_type_t & lhs, const ggml_backend_buffer_type_t & rhs) const {
@@ -182,6 +202,8 @@ struct llama_model_loader {
         bool check_tensors,
         bool no_alloc,
         bool load_mtp,
+        bool merge_up_gate_exps,
+        bool merge_qkv,
         const llama_model_kv_override * param_overrides_p,
         const llama_model_tensor_buft_override * param_tensor_buft_overrides_p);
 
@@ -237,6 +259,32 @@ struct llama_model_loader {
     struct ggml_tensor * create_tensor(
         const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
         const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags);
+
+    // merge the gate and up experts tensors of one layer into a single ffn_gate_up_exps tensor
+    // returns the merged tensor, or nullptr if merging is not possible (missing tensor, type mismatch, lazy read)
+    struct ggml_tensor * merge_ffn_gate_up_exps(
+        const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
+        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_gate, const LLM_TN_IMPL & tn_up);
+
+    // after all tensor data was loaded, scatter the gate/up expert slices into the merged tensors
+    // merged layout is [gate | up] per expert, as expected by build_moe_ffn
+    void repack_merged_gate_up();
+
+    // merge the q, k, v tensors of one layer into a single attn_qkv tensor
+    // returns the merged tensor, or nullptr if merging is not possible (missing tensor, type mismatch, scale tensors, lazy read)
+    // q, k, v are returned as views into the merged tensor under their original names, so load_all_data
+    // fills the merged tensor by matching them to the file tensors by name, and graphs that use
+    // layer.wq/wk/wv directly keep working
+    // if all three biases exist they are merged too and written to *bias_out
+    struct ggml_tensor * merge_ffn_qkv(
+        const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
+        const buft_list_t * buft_list_layer, const LLM_TN_IMPL & tn_merged, const LLM_TN_IMPL & tn_q, const LLM_TN_IMPL & tn_k, const LLM_TN_IMPL & tn_v,
+        ggml_tensor ** bias_out, ggml_tensor ** q_out, ggml_tensor ** k_out, ggml_tensor ** v_out);
+
+    // true if ctx contains a merged base tensor: zero-copy mmap is not possible for it
+    bool has_merged_ctx(ggml_context * ctx) const {
+        return (has_merged_gate_up || has_merged_qkv) && merged_ctxs.count(ctx) != 0;
+    }
 
     void done_getting_tensors(bool partial = false) const;
 

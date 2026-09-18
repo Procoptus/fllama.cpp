@@ -1773,7 +1773,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         // a lazy context is mapped whatever the load mode, but the memory-fit pass maps nothing
         const bool is_lazy_mapped = ctx_key.lazy && !ml.no_alloc;
 
-        if ((ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+        // merged gate_up tensors are repacked after loading, so zero-copy mapping does not work for their context
+        if ((ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft && !ml.has_merged_ctx(ctx)) {
             GGML_ASSERT(!ml.no_alloc);
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
@@ -1871,6 +1872,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         if (!ml.load_all_data(ctx, buf_map, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
             return false;
         }
+    }
+
+    if (ml.merge_up_gate_exps) {
+        ml.repack_merged_gate_up();
     }
 
     if (use_mmap_buffer) {
@@ -2803,6 +2808,8 @@ llama_model_params llama_model_default_params() {
         /*.no_host                     =*/ false,
         /*.no_alloc                    =*/ false,
         /*.load_mtp                    =*/ false,
+        /*.merge_up_gate_exps          =*/ false,
+        /*.merge_qkv                   =*/ false,
     };
 
     return result;
@@ -2842,6 +2849,10 @@ int32_t llama_model_n_layer(const llama_model * model) {
 
 int32_t llama_model_n_layer_nextn(const llama_model * model) {
     return model->hparams.n_layer_nextn;
+}
+
+int32_t llama_model_n_expert_used(const llama_model * model) {
+    return model->hparams.n_expert_used(0);
 }
 
 int32_t llama_model_dflash_selector_top_k(const llama_model * model) {
@@ -3206,6 +3217,11 @@ bool llama_model_is_recurrent(const llama_model * model) {
     return llm_arch_is_recurrent(model->arch);
 }
 
+
+bool llama_model_is_mla(const llama_model * model) {
+    return model->hparams.is_mla();
+}
+
 bool llama_model_is_hybrid(const llama_model * model) {
     return llm_arch_is_hybrid(model->arch);
 }
@@ -3262,8 +3278,16 @@ void llama_model_base::create_tensor_gate_up_exps(llama_layer & layer, int bid, 
 
     layer.ffn_gate_up_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", bid), {n_embd_, n_ff_ * 2, n_expert_}, TENSOR_NOT_REQUIRED);
     if (layer.ffn_gate_up_exps == nullptr) {
-        layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
-        layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
+        if (ml->merge_up_gate_exps && flags == 0) {
+            const buft_list_t * buft_list_layer = bid == -1 ? nullptr : pimpl->dev_layer.at(bid).buft_list;
+            layer.ffn_gate_up_exps = ml->merge_ffn_gate_up_exps(
+                hparams, &pimpl->cpu_buft_list, pimpl->dev_input.buft_list, pimpl->dev_output.buft_list, buft_list_layer,
+                tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", bid), tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", bid), tn(LLM_TENSOR_FFN_UP_EXPS, "weight", bid));
+        }
+        if (layer.ffn_gate_up_exps == nullptr) {
+            layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
+            layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
+        }
     }
 }
 
@@ -3296,6 +3320,32 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
             layer.wv_b = create_tensor(tn(LLM_TENSOR_ATTN_V, "bias", bid), {n_embd_v_}, TENSOR_NOT_REQUIRED);
         }
     } else {
+        if (ml->merge_qkv && flags == 0 && hparams.f_attention_scale == 0.0f) {
+            const buft_list_t * buft_list_layer = bid == -1 ? nullptr : pimpl->dev_layer.at(bid).buft_list;
+            ggml_tensor * qkv_b = nullptr;
+            ggml_tensor * wq_v = nullptr;
+            ggml_tensor * wk_v = nullptr;
+            ggml_tensor * wv_v = nullptr;
+            ggml_tensor * wqkv = ml->merge_ffn_qkv(
+                hparams, &pimpl->cpu_buft_list, pimpl->dev_input.buft_list, pimpl->dev_output.buft_list, buft_list_layer,
+                tn(LLM_TENSOR_ATTN_QKV, "weight", bid), tn(LLM_TENSOR_ATTN_Q, "weight", bid), tn(LLM_TENSOR_ATTN_K, "weight", bid), tn(LLM_TENSOR_ATTN_V, "weight", bid),
+                &qkv_b, &wq_v, &wk_v, &wv_v);
+            if (wqkv) {
+                layer.wqkv = wqkv;
+                // views with the original q/k/v names keep graphs using layer.wq/wk/wv directly working
+                layer.wq = wq_v;
+                layer.wk = wk_v;
+                layer.wv = wv_v;
+                if (qkv_b) {
+                    layer.wqkv_b = qkv_b;
+                } else {
+                    layer.wq_b = create_tensor(tn(LLM_TENSOR_ATTN_Q, "bias", bid), {n_embd_q_}, TENSOR_NOT_REQUIRED);
+                    layer.wk_b = create_tensor(tn(LLM_TENSOR_ATTN_K, "bias", bid), {n_embd_k_}, TENSOR_NOT_REQUIRED);
+                    layer.wv_b = create_tensor(tn(LLM_TENSOR_ATTN_V, "bias", bid), {n_embd_v_}, TENSOR_NOT_REQUIRED);
+                }
+                return;
+            }
+        }
         layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", bid), {n_embd_, n_embd_q_}, flags);
         layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", bid), {n_embd_, n_embd_k_}, flags);
         layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", bid), {n_embd_, n_embd_v_}, flags);
