@@ -53,6 +53,7 @@
 /out/
 /tmp/
 /autogen-*.md
+/_tmp_pr/
 /common/build-info.cpp
 
 # Deprecated

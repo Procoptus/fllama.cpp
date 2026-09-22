@@ -67,19 +67,12 @@ For the full list of features, please refer to [server's changelog](https://gith
 | `--yarn-beta-fast N` | YaRN: low correction dim or beta (default: -1.00)<br/>(env: LLAMA_ARG_YARN_BETA_FAST) |
 | `-kvo, --kv-offload, -nkvo, --no-kv-offload` | whether to enable KV cache offloading (default: enabled)<br/>(env: LLAMA_ARG_KV_OFFLOAD) |
 | `--repack, -nr, --no-repack` | whether to enable weight repacking (default: enabled)<br/>(env: LLAMA_ARG_REPACK) |
-| `-muge, --merge-up-gate-experts` | whether to merge ffn_up_exps and ffn_gate_exps tensors at load time (default: disabled)<br/>(env: LLAMA_ARG_MERGE_UP_GATE_EXPS) |
-| `-mqkv, --merge-qkv` | whether to merge wq, wk, wv tensors at load time (default: disabled)<br/>(env: LLAMA_ARG_MERGE_QKV) |
 | `--no-host` | bypass host buffer allowing extra buffers to be used<br/>(env: LLAMA_ARG_NO_HOST) |
 | `-ctk, --cache-type-k TYPE` | KV cache data type for K<br/>allowed values: f32, f16, bf16, q8_0, q4_0, q4_1, iq4_nl, q5_0, q5_1<br/>(default: f16)<br/>(env: LLAMA_ARG_CACHE_TYPE_K) |
 | `-ctv, --cache-type-v TYPE` | KV cache data type for V<br/>allowed values: f32, f16, bf16, q8_0, q4_0, q4_1, iq4_nl, q5_0, q5_1<br/>(default: f16)<br/>(env: LLAMA_ARG_CACHE_TYPE_V) |
 | `-dt, --defrag-thold N` | KV cache defragmentation threshold (DEPRECATED)<br/>(env: LLAMA_ARG_DEFRAG_THOLD) |
 | `--rpc SERVERS` | comma-separated list of RPC servers (host:port)<br/>(env: LLAMA_ARG_RPC) |
 | `-lm, --load-mode MODE` | model loading mode (default: auto)<br/>- auto: mmap, unless a device does not support it<br/>- none: no special loading mode<br/>- mmap: memory-map model (if mmap disabled, slower load but may reduce pageouts if not using mlock)<br/>- mlock: force system to keep model in RAM rather than swapping or compressing<br/>- mmap+mlock: mmap + force system to keep model in RAM rather than swapping or compressing<br/>- dio: use DirectIO if available<br/><br/>(env: LLAMA_ARG_LOAD_MODE) |
-| `-moe-res, --moe-expert-residency, -nmoe-res, --no-moe-expert-residency` | enable MoE expert residency tracking (reduces physical memory pressure of MoE models via madvise). Requires --load-mode mmap. (default: disabled)<br/>(env: LLAMA_ARG_MOE_EXPERT_RESIDENCY) |
-| `-moe-res-k, --moe-resident-per-layer N` | max experts kept hot per MoE layer (default: 32)<br/>(env: LLAMA_ARG_MOE_RESIDENT_PER_LAYER) |
-| `-moe-pwk, --moe-prewarm-top-k N` | experts to prewarm per layer at startup (default: 16)<br/>(env: LLAMA_ARG_MOE_PREWARM_TOP_K) |
-| `--moe-residency-debug [on\|off]` | periodically sample each tracked expert's pages via mincore() and log the physical residency ratio alongside the software policy state. Linux only. (default: off)<br/>(env: LLAMA_ARG_MOE_RESIDENCY_DEBUG) |
-| `-moe-rdint, --moe-residency-debug-interval N` | decodes between mincore() samples (default: 64)<br/>(env: LLAMA_ARG_MOE_RESIDENCY_DEBUG_INTERVAL) |
 | `-lzm, --lazy-mode MODE` | on-demand reading of certain tensors, for example per-layer embeddings (default: auto)<br/>- on: read the rows of such tensors from disk on demand instead of keeping them resident (requires mmap)<br/>- auto: on, but only for tensors larger than 4 GiB<br/>- off: always keep them resident<br/>(env: LLAMA_ARG_LAZY_MODE) |
 | `--numa TYPE` | attempt optimizations that help on some NUMA systems<br/>- distribute: spread execution evenly over all nodes<br/>- isolate: only spawn threads on CPUs on the node that execution started on<br/>- numactl: use the CPU map provided by numactl<br/>if run without this previously, it is recommended to drop the system page cache before using this<br/>see https://github.com/ggml-org/llama.cpp/issues/1437<br/>(env: LLAMA_ARG_NUMA) |
 | `-dev, --device <dev1,dev2,..>` | comma-separated list of devices to use for offloading (none = don't offload)<br/>use --list-devices to see a list of available devices<br/>(env: LLAMA_ARG_DEVICE) |
@@ -171,23 +164,7 @@ For the full list of features, please refer to [server's changelog](https://gith
 | `--kv-unified-per-slot N` | context limit per parallel slot (default: unset, behavior unchanged).<br/>when set without -c/--ctx-size, the shared KV pool is sized to n_parallel*N<br/>(env: LLAMA_ARG_KV_UNIFIED_PER_SLOT) |
 | `-ctxcp, --ctx-checkpoints, --swa-checkpoints N` | max number of context checkpoints to create per slot (default: 32)[(more info)](https://github.com/ggml-org/llama.cpp/pull/15293)<br/>(env: LLAMA_ARG_CTX_CHECKPOINTS) |
 | `-cms, --checkpoint-min-step N` | minimum spacing between context checkpoints in tokens (default: 8192, 0 = no minimum)<br/>(env: LLAMA_ARG_CHECKPOINT_MIN_SPACING_NT) |
-| `--checkpoint-near-end, --no-checkpoint-near-end` | force a checkpoint within the last ubatch of every prompt, regardless of --checkpoint-min-step (default: off) |
-| `-cpent, --checkpoint-every-n-tokens N` | create a checkpoint every n tokens during prefill (processing), -1 to disable (default: -1)<br/>(env: LLAMA_ARG_CHECKPOINT_EVERY_N_TOKENS) |
-| `-cram, --cache-ram N` | set the maximum host-memory prompt cache size in MiB (default: 8192, -1 - no limit, 0 - disable) -- only useful with --parallel > 1; with a single slot the save+load round-trip is a no-op. [(more info)](https://github.com/ggml-org/llama.cpp/pull/16391)<br/>(env: LLAMA_ARG_CACHE_RAM) |
-| `-ssd, --cache-ssd PATH` | enable SSD-backed KV cache with path to storage directory<br/>(env: LLAMA_ARG_CACHE_SSD) |
-| `-ssd-cp, --cache-ssd-checkpoints N` | max number of SSD-backed checkpoints per slot (default: 64)<br/>(env: LLAMA_ARG_CACHE_SSD_CHECKPOINTS) |
-| `-ssd-hot, --cache-ssd-hot-window N` | always-keep window size in tokens for SSD cache (default: 16384)<br/>(env: LLAMA_ARG_CACHE_SSD_HOT_WINDOW) |
-| `-ssd-warm, --cache-ssd-warm-window N` | keep-in-RAM window size in tokens for SSD cache (default: 32768)<br/>(env: LLAMA_ARG_CACHE_SSD_WARM_WINDOW) |
-| `-ssd-mc, --cache-ssd-max-cold N` | max cold tier checkpoints before oldest-first eviction (default: 0, 0=unlimited)<br/>(env: LLAMA_ARG_CACHE_SSD_MAX_COLD) |
-| `-ssd-hot-ram, --cache-ssd-hot-ram N` | hot tier RAM budget in MiB for SSD cache (default: auto-size, 0=auto)<br/>(env: LLAMA_ARG_CACHE_SSD_HOT_RAM) |
-| `-ssd-warm-ram, --cache-ssd-warm-ram N` | warm tier RAM budget in MiB for SSD cache (default: auto-size, 0=auto)<br/>(env: LLAMA_ARG_CACHE_SSD_WARM_RAM) |
-| `--cache-ssd-max-conversations N` | max conversation directories (default: 16, 0=unlimited)<br/>(env: LLAMA_ARG_CACHE_SSD_MAX_CONVERSATIONS) |
-| `--cache-ssd-cold-maxsize N` | global cap on total cold tier size across all conversations in MiB (default: 0, 0=unlimited)<br/>(env: LLAMA_ARG_CACHE_SSD_COLD_MAXSIZE) |
-| `--prompt-max N` | max system prompt cache entries (default: 8, 0=disabled)<br/>(env: LLAMA_ARG_PROMPT_MAX) |
-| `--cache-ssd-system-prompts N` | max global system prompt entries cached for reuse across conversations (default: 8, 0=disabled)<br/>(env: LLAMA_ARG_CACHE_SSD_SYSTEM_PROMPTS) |
-| `--cache-ssd-system-max-days N` | expire system prompt cache entries unused for N days (default: 30, 0=never)<br/>(env: LLAMA_ARG_CACHE_SSD_SYSTEM_MAX_DAYS) |
-| `-ssd-ps, --cache-ssd-page-size N` | tokens per page for SSD cache: 512, 1024, 2048 (default: 1024)<br/>(env: LLAMA_ARG_CACHE_SSD_PAGE_SIZE) |
-| `--cache-ssd-no-fsync` | skip fsync on SSD checkpoint writes (default: disabled) |
+| `-cram, --cache-ram N` | set the maximum cache size in MiB (default: 8192, -1 - no limit, 0 - disable)[(more info)](https://github.com/ggml-org/llama.cpp/pull/16391)<br/>(env: LLAMA_ARG_CACHE_RAM) |
 | `-kvu, --kv-unified, -no-kvu, --no-kv-unified` | use single unified KV buffer shared across all sequences (default: enabled if number of slots is auto)<br/>(env: LLAMA_ARG_KV_UNIFIED) |
 | `--cache-idle-slots, --no-cache-idle-slots` | save idle slots to the prompt cache on new task, and clear them when using unified KV (default: enabled, requires cache-ram)<br/>(env: LLAMA_ARG_CACHE_IDLE_SLOTS) |
 | `--context-shift, --no-context-shift` | whether to use context shift on infinite text generation (default: disabled)<br/>(env: LLAMA_ARG_CONTEXT_SHIFT) |
@@ -197,7 +174,6 @@ For the full list of features, please refer to [server's changelog](https://gith
 | `--spm-infill` | use Suffix/Prefix/Middle pattern for infill (instead of Prefix/Suffix/Middle) as some models prefer this. (default: disabled) |
 | `--pooling {none,mean,cls,last,rank}` | pooling type for embeddings, use model default if unspecified<br/>(env: LLAMA_ARG_POOLING) |
 | `-np, --parallel N` | number of server slots (default: -1, -1 = auto)<br/>(env: LLAMA_ARG_N_PARALLEL) |
-| `--max-concurrent-per-user N` | per-user_id concurrency cap on in-flight slots (default: 0, 0 = unlimited). also applies to the _anonymous bucket.<br/>(env: LLAMA_ARG_MAX_CONCURRENT_PER_USER) |
 | `-cb, --cont-batching, -nocb, --no-cont-batching` | whether to enable continuous batching (a.k.a dynamic batching) (default: enabled)<br/>(env: LLAMA_ARG_CONT_BATCHING) |
 | `-mm, --mmproj FILE` | path to a multimodal projector file. see tools/mtmd/README.md<br/>note: if -hf is used, this argument can be omitted<br/>(env: LLAMA_ARG_MMPROJ) |
 | `-mmu, --mmproj-url URL` | URL to a multimodal projector file. see tools/mtmd/README.md<br/>(env: LLAMA_ARG_MMPROJ_URL) |
@@ -2103,49 +2079,6 @@ Note that the following endpoints are exempt from being considered as incoming t
 - `GET /props`
 - `GET /models`
 - `GET /metrics`
-
-## SSD-backed KV cache
-
-The server can persist conversation KV checkpoints to disk, so after a restart a matching conversation is restored from disk instead of reprocessing the whole prompt. Enable it with `--cache-ssd PATH`.
-
-The cache is tiered:
-
-- **hot**: hot KV tokens always kept in RAM, `--cache-ssd-hot-window` tokens per conversation (default 16384)
-- **warm**: recent window kept in RAM while within budget, `--cache-ssd-warm-window` tokens (default 32768); RAM budgets are `--cache-ssd-hot-ram` / `--cache-ssd-warm-ram` in MiB, auto-sized from free RAM when left at 0
-- **cold**: checkpoints written to disk, loaded back on demand
-
-A conversation is identified by a hash of the leading prompt tokens (up to 1024). On a cold slot, the server looks for a stored checkpoint of the same conversation and resumes from the longest common prefix. Each conversation gets its own subdirectory under `PATH` named by the conversation hash; a shared `sys-<compat-hash>` subdirectory stores system prompt KV.
-
-The system prompt cache (`--cache-ssd-system-prompts`, default 8) additionally stores KV of common system prompts globally, so different conversations that start with the same large system prompt skip reprocessing it. Entries expire after `--cache-ssd-system-max-days` days without use (0 = never).
-
-Example:
-
-```bash
-llama-server -m model.gguf -c 90000 --cache-ssd ./kv-ssd --cache-ssd-cold-maxsize 51200
-```
-
-| Argument | Explanation |
-| --- | ----------- |
-| `-ssd, --cache-ssd PATH` | enable SSD-backed KV cache at PATH (default: disabled) |
-| `-ssd-cp, --cache-ssd-checkpoints N` | max checkpoints per conversation (default: 64) |
-| `-ssd-hot, --cache-ssd-hot-window N` | always-keep window in tokens (default: 16384) |
-| `-ssd-warm, --cache-ssd-warm-window N` | keep-in-RAM window in tokens (default: 32768) |
-| `-ssd-hot-ram, --cache-ssd-hot-ram N` | hot tier RAM budget in MiB (default: auto) |
-| `-ssd-warm-ram, --cache-ssd-warm-ram N` | warm tier RAM budget in MiB (default: auto) |
-| `-ssd-mc, --cache-ssd-max-cold N` | max cold checkpoints before oldest-first eviction (default: 0 = unlimited) |
-| `--cache-ssd-max-conversations N` | max conversation directories (default: 16, 0 = unlimited) |
-| `--cache-ssd-cold-maxsize N` | global cap on total cold tier size in MiB (default: 0 = unlimited) |
-| `--cache-ssd-system-prompts N` | max global system prompt entries (default: 8, 0 = disabled) |
-| `--cache-ssd-system-max-days N` | expire system prompt entries unused for N days (default: 30, 0 = never) |
-| `-ssd-ps, --cache-ssd-page-size N` | tokens per page: 512, 1024, 2048 (default: 1024) |
-| `--cache-ssd-no-fsync` | skip fsync on checkpoint writes (faster, less durable) |
-
-Notes:
-
-- Stored entries are tied to the model and KV configuration; after changing the model file or cache types (`-ctk`/`-ctv`) the old entries no longer match and are ignored.
-- The cache directory can be deleted at any time; the server just recreates entries on the next turns.
-- Checkpoint writes are atomic (write to temp + rename), so killing the server mid-write does not corrupt existing entries.
-- Use `--cache-ssd-no-fsync` when losing the very last checkpoint after a power loss is acceptable; it removes fsync latency from turn completion.
 
 ## More examples
 
