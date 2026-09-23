@@ -672,10 +672,10 @@ struct common_params {
     int32_t cache_ssd_system_max_days = 30; // expire system prompts unused for N days (0=never)
     bool cache_ssd_no_fsync = false;      // skip fsync on SSD checkpoint writes (trade durability for latency)
 
-   std::string hostname      = "127.0.0.1";
     std::string public_path   = "";                                                                         // NOLINT
     std::string api_prefix    = "";                                                                         // NOLINT
     std::string chat_template = "";                                                                         // NOLINT
+    std::vector<std::string> hostnames = {"127.0.0.1"};
     bool use_jinja = true;                                                                                  // NOLINT
 
     // server CORS params
