@@ -1754,9 +1754,9 @@ private:
                 compat_h ^= (uint64_t)((tv >> 24) & 0xFF); compat_h *= 1099511628211ULL;
             }
 
-            static auto hex64 = [](uint64_t h) {
+            auto hex64 = [](uint64_t h) {
                 char buf[17];
-                std::snprintf(buf, sizeof(buf), "%016lx", (unsigned long)h);
+                std::snprintf(buf, sizeof(buf), "%016" PRIx64, h);
                 return std::string(buf);
             };
 
@@ -2032,8 +2032,8 @@ private:
                 // stale context. The slot will be recovered via LRU fallback
                 // and cleared in the cache-update block below.
                 if (slot.conv_hash != 0 && slot.conv_hash != task_conv_hash) {
-                    SLT_DBG(slot, "LCP match rejected: conv_hash mismatch (slot=0x%016lx task=0x%016lx) - different conversation\n",
-                            (unsigned long)slot.conv_hash, (unsigned long)task_conv_hash);
+                    SLT_DBG(slot, "LCP match rejected: conv_hash mismatch (slot=0x%016" PRIx64 " task=0x%016" PRIx64 ") - different conversation\n",
+                            slot.conv_hash, task_conv_hash);
                     continue;
                 }
 
@@ -2093,9 +2093,9 @@ private:
                     if (!same_session) {
                         session_reset = session_reset || (f_keep < 0.5f && sim_best < 0.95f);
                     } else {
-                        SLT_DBG(*ret, "session continuity preserved (user_id match + conv_hash=0x%016lx match), "
+                        SLT_DBG(*ret, "session continuity preserved (user_id match + conv_hash=0x%016" PRIx64 " match), "
                                 "skipping LCP boundary detection (f_keep=%.3f, sim_best=%.3f)\n",
-                                (unsigned long)task_conv_hash, f_keep, sim_best);
+                                task_conv_hash, f_keep, sim_best);
                     }
                     // Redact raw user_ids in the INFO log; emit short
                     // SHA-256 prefixes for correlation only.
@@ -2216,8 +2216,8 @@ private:
                 }
 
                 if (session_reset) {
-                    SLT_INF(*ret, "conversation boundary: clearing stale KV cache from previous session (conv_hash slot=0x%016lx task=0x%016lx)\n",
-                            (unsigned long)ret->conv_hash, (unsigned long)task_conv_hash);
+                    SLT_INF(*ret, "conversation boundary: clearing stale KV cache from previous session (conv_hash slot=0x%016" PRIx64 " task=0x%016" PRIx64 ")\n",
+                            ret->conv_hash, task_conv_hash);
                     ret->prompt_clear();
                     ret->needs_session_reset = true; // signal launch_slot_with_task (no-op if already cleared)
                 }
@@ -2460,8 +2460,8 @@ private:
         const bool conv_boundary = !stateless && slot.conv_hash != 0 && slot.conv_hash != task_conv_hash;
         if (slot.needs_session_reset || conv_boundary) {
             if (!slot.needs_session_reset) {
-                SLT_INF(slot, "conversation boundary detected (conv_hash: slot=0x%016lx task=0x%016lx) - purging KV cache and prompt for new session\n",
-                        (unsigned long)slot.conv_hash, (unsigned long)task_conv_hash);
+                SLT_INF(slot, "conversation boundary detected (conv_hash: slot=0x%016" PRIx64 " task=0x%016" PRIx64 ") - purging KV cache and prompt for new session\n",
+                        slot.conv_hash, task_conv_hash);
             }
 
             // seq_rm with p0=-1, p1=-1 removes ALL KV cache entries for this
@@ -4520,7 +4520,7 @@ private:
                                                 slot.prompt.tokens.push_back(task_tokens[i]);
                                             }
 
-                                            SLT_INF(slot, "system prompt cache hit: hash=%016lx, n_sys=%d\n",
+                                            SLT_INF(slot, "system prompt cache hit: hash=%016" PRIx64 ", n_sys=%d\n",
                                                     sys_hash, n_sys);
                                         } else {
                                             SLT_WRN(slot, "system prompt cache entry restored no usable [0,%d) "

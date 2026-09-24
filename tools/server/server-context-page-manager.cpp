@@ -9,6 +9,7 @@
 #include "llama.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstring>
 #include <cstdio>
 #include <chrono>
@@ -122,8 +123,8 @@ void server_context_page_manager::set_model_info(const struct llama_model* model
         wrapper->set_compat_hash(h);
     }
 
-    LOG_INF("SSD cache: model compat_hash %016lx (arch dims + type_k=%d type_v=%d)\n",
-            (unsigned long)h, cache_type_k, cache_type_v);
+    LOG_INF("SSD cache: model compat_hash %016" PRIx64 " (arch dims + type_k=%d type_v=%d)\n",
+            h, cache_type_k, cache_type_v);
 }
 
 server_ssd_cache* server_context_page_manager::get_or_create_cache(uint64_t conv_hash) {
@@ -141,7 +142,7 @@ server_ssd_cache* server_context_page_manager::get_or_create_cache(uint64_t conv
 
         for (const auto& [cv, cache] : conv_caches_) {
             char hex[17];
-            snprintf(hex, sizeof(hex), "%016lx", (unsigned long)cv);
+            snprintf(hex, sizeof(hex), "%016" PRIx64, cv);
             fs::path dir = fs::path(ssd_base_path_) / hex;
 
             std::error_code ec;
@@ -158,12 +159,12 @@ server_ssd_cache* server_context_page_manager::get_or_create_cache(uint64_t conv
         }
 
         if (oldest_conv != 0) {
-            LOG_WRN("SSD cache: evicting conversation %016lx (max=%d reached)\n",
-                     (unsigned long)oldest_conv, max_conversations);
+            LOG_WRN("SSD cache: evicting conversation %016" PRIx64 " (max=%d reached)\n",
+                     oldest_conv, max_conversations);
 
             // Delete conversation directory and all its files
             char hex[17];
-            snprintf(hex, sizeof(hex), "%016lx", (unsigned long)oldest_conv);
+            snprintf(hex, sizeof(hex), "%016" PRIx64, oldest_conv);
             fs::path dir = fs::path(ssd_base_path_) / hex;
 
             for (const auto& entry : fs::directory_iterator(dir)) {
@@ -192,8 +193,8 @@ server_ssd_cache* server_context_page_manager::get_or_create_cache(uint64_t conv
     conv_caches_[conv_hash] = std::move(cache_ptr);
     conv_wrappers_[conv_hash] = std::move(wrapper);
 
-    LOG_INF("SSD cache: created new conversation cache conv=%016lx (total=%zu)\n",
-             (unsigned long)conv_hash, conv_caches_.size());
+    LOG_INF("SSD cache: created new conversation cache conv=%016" PRIx64 " (total=%zu)\n",
+             conv_hash, conv_caches_.size());
 
     return result;
 }
@@ -444,8 +445,8 @@ bool server_context_page_manager::find_matching_checkpoint(
             0.90f, model_compat_hash_);
         if (continuation != 0) {
             effective_conv = continuation;
-            LOG_INF("SSD cache: reusing conversation %016lx (90%%+ prefix match)\n",
-                     (unsigned long)continuation);
+            LOG_INF("SSD cache: reusing conversation %016" PRIx64 " (90%%+ prefix match)\n",
+                    continuation);
         }
     }
 
@@ -554,8 +555,8 @@ bool server_context_page_manager::find_and_load_checkpoint(
         if (continuation != 0) {
             effective_conv = continuation;
             is_continuation = true;
-            LOG_INF("SSD cache: reusing conversation %016lx for cold restart\n",
-                    (unsigned long)continuation);
+            LOG_INF("SSD cache: reusing conversation %016" PRIx64 " for cold restart\n",
+                    continuation);
             if (out_overlap) *out_overlap = overlap;
         }
     }
@@ -673,7 +674,7 @@ server_ssd_cache* server_context_page_manager::get_or_create_user_cache(const st
 
         for (const auto& [uk, cache] : user_caches_) {
             char hex[17];
-            snprintf(hex, sizeof(hex), "%016lx", (unsigned long)uk);
+            snprintf(hex, sizeof(hex), "%016" PRIx64, uk);
             fs::path dir = fs::path(ssd_base_path_) / "u" / hex;
 
             std::error_code ec;
@@ -690,11 +691,11 @@ server_ssd_cache* server_context_page_manager::get_or_create_user_cache(const st
         }
 
         if (oldest != 0) {
-            LOG_WRN("SSD cache: evicting user %016lx (max=%d reached)\n",
-                     (unsigned long)oldest, max_conversations);
+            LOG_WRN("SSD cache: evicting user %016" PRIx64 " (max=%d reached)\n",
+                     oldest, max_conversations);
 
             char hex[17];
-            snprintf(hex, sizeof(hex), "%016lx", (unsigned long)oldest);
+            snprintf(hex, sizeof(hex), "%016" PRIx64, oldest);
             fs::path dir = fs::path(ssd_base_path_) / "u" / hex;
 
             for (const auto& entry : fs::directory_iterator(dir)) {
@@ -725,8 +726,8 @@ server_ssd_cache* server_context_page_manager::get_or_create_user_cache(const st
     // operators need to correlate this log with a request; the raw
     // value may be a PII-equivalent (e.g. an email-style opaque ID)
     // and would be at rest in the log file.
-    LOG_INF("SSD cache: created new user cache key=%016lx (total=%zu)\n",
-             (unsigned long)key, user_caches_.size());
+    LOG_INF("SSD cache: created new user cache key=%016" PRIx64 " (total=%zu)\n",
+             key, user_caches_.size());
 
     return result;
 }
@@ -793,12 +794,12 @@ void server_context_page_manager::evict_conversations_for_size_locked() {
     candidates.reserve(conv_caches_.size() + user_caches_.size());
     for (const auto& conv_pair : conv_caches_) {
         char hex[17];
-        snprintf(hex, sizeof(hex), "%016lx", (unsigned long)conv_pair.first);
+        snprintf(hex, sizeof(hex), "%016" PRIx64, conv_pair.first);
         candidates.push_back({ mtime_for(fs::path(ssd_base_path_) / hex), false, conv_pair.first });
     }
     for (const auto& user_pair : user_caches_) {
         char hex[17];
-        snprintf(hex, sizeof(hex), "%016lx", (unsigned long)user_pair.first);
+        snprintf(hex, sizeof(hex), "%016" PRIx64, user_pair.first);
         candidates.push_back({ mtime_for(fs::path(ssd_base_path_) / "u" / hex), true, user_pair.first });
     }
 
@@ -812,7 +813,7 @@ void server_context_page_manager::evict_conversations_for_size_locked() {
         if (total <= cold_max_size_bytes) break;
 
         char hex[17];
-        snprintf(hex, sizeof(hex), "%016lx", (unsigned long)c.key);
+        snprintf(hex, sizeof(hex), "%016" PRIx64, c.key);
         fs::path dir = c.is_user
             ? fs::path(ssd_base_path_) / "u" / hex
             : fs::path(ssd_base_path_) / hex;
@@ -883,9 +884,9 @@ void server_context_page_manager::evict_conversations_for_size_locked() {
         total = (freed > total) ? 0 : total - freed;
         evicted++;
 
-        LOG_WRN("SSD cache: evicted conversation %skey=%016lx (%zu MiB freed, total=%zu MiB, cap=%zu MiB)\n",
+        LOG_WRN("SSD cache: evicted conversation %skey=%016" PRIx64 " (%zu MiB freed, total=%zu MiB, cap=%zu MiB)\n",
                 c.is_user ? "user " : "",
-                (unsigned long)c.key,
+                c.key,
                 freed / (1024 * 1024),
                 total / (1024 * 1024),
                 cold_max_size_bytes / (1024 * 1024));
