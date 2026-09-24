@@ -1,0 +1,78 @@
+# формат: ID|СТАТУС|тема
+# искать: findstr /i /c:"2225" checked-ids.txt
+2297|APPLIED|FA fix
+2372|APPLIED|FA DKQ256 gqa12
+2373|APPLIED|k_simple_gemm_f32 fast path
+1599|CONFIG|quantized KV ctk ctv
+1261|CONFIG|ngram self speculation
+2262|CONFIG|ncmoe instead of ot regex
+1137|CONFIG|merged gate up experts (GGUF reconversion only)
+1403|CONFIG|fused moe gate up (GGUF reconversion only)
+2225|PORTABLE|bucket top_k CPU
+1049|PORTABLE|needs_sync in backend sched
+860|APPLIED|tensor name formatting (2026-09-03)
+1427|PORTABLE|CPU rms_norm SIMD rewrite
+1417|PORTABLE|top_n_sigma pow to d*d
+1560|PORTABLE|compute buffer reserve CLI
+1759|BLOCKED|async recurrent state copies
+2316|UPSTREAM|graph uid and src compare
+2136|UPSTREAM|CPY recapture
+2292|UPSTREAM|padding protection
+1170|UPSTREAM|experts bias topk moe
+2389|UPSTREAM|defer-ple via lazy mode
+1501|UPSTREAM|moe aware fit
+1421|UPSTREAM|cuda ssm_conv fusion
+2116|UPSTREAM|avx vnni
+1452|UPSTREAM|FA vec D256 quantized KV
+2345|UPSTREAM|DFlash 2
+1393|UPSTREAM|graph reuse
+1094|UPSTREAM|graph reuse v2
+947|UPSTREAM|graph reuse -gr
+1702|UPSTREAM|enable cuda graphs
+825|UPSTREAM|attention mask f16
+1988|N/A|linux pinned host mem
+2310|N/A|swa-compress laguna
+2266|N/A|swa-compress deepseek4 openpangu
+2347|N/A|CUDA DSA
+928|N/A|deepseek concat cpy fusion
+1997|N/A|DFlash FA-ready KV
+2102|N/A|mmap graph parallel multi-gpu
+1942|N/A|FA head 512 turing
+1707|N/A|small batch moe ik kernels
+2339|N/A|IQ4_KS RDNA3 iqk
+2107|N/A|clang broadcast iqk
+1991|N/A|VNNI256 msvc iqk
+2165|N/A|deepseek4 perf
+2144|N/A|P100 FA fp32 sm60
+2065|N/A|openPangu MTP MLA
+2061|N/A|DFlash gpt-oss draft
+2048|N/A|DFlash MiMo draft
+1921|N/A|head_dim 512 gemma4
+1788|N/A|mmproj n_batch
+1649|N/A|delta-net syncthreads bug absent
+1638|N/A|Volta MMQ tile sm70
+1388|N/A|qwen3.5 graph parallel multi-gpu
+1283|N/A|qwen3-next cpu silu ik path
+1089|N/A|graph parallel gen2 multi-gpu
+1080|N/A|graph parallel multi-gpu
+1061|N/A|cohere2 sm
+1022|N/A|cuda tensor parallel multi-gpu
+929|N/A|deepseek MLA FA
+923|N/A|cuda moe ik fmoe
+868|N/A|fused ops ik ggml-cuda
+840|N/A|fused ops ik ggml-cuda
+864|N/A|fuse up unary MMVQ ik kernels
+760|N/A|K-shift ARM only packing
+1278|N/A|qwen3next graph disable not present
+1761|N/A|greedy not called at temp 1.0
+2010|N/A|linux THP
+1634|N/A|defer experts
+2101|N/A|prefetch experts
+1320|N/A|delta-net cpu path
+1362|N/A|delta-net cpu path
+1315|N/A|delta-net cpu path
+1330|N/A|delta-net cpu path
+2361|N/A|iqk backend absent
+10|N/A|FA head128 gqa16
+1221|N/A|FA head128 gqa16
+6be3a488d|N/A|FA head128 gqa16
