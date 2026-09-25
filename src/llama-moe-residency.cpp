@@ -17,12 +17,13 @@
 #include <cstring>
 #include <cerrno>
 #ifdef _WIN32
-// Windows has no madvise/getpagesize. Provide no-op stubs so the residency
-// code compiles unchanged; on Windows the residency feature is inert (advice
-// calls report EINVAL via counters, model stays fully paged in).
+// Windows has no madvise(). Map the advice values onto Win32 working-set
+// hints: WILLNEED -> PrefetchVirtualMemory (page the range in from the
+// file), COLD/DONTNEED -> VirtualUnlock (trim the range from the working
+// set without invalidating the file-backed copy).
 #include <windows.h>
 static inline int getpagesize(void) {
-    static int ps = [] () { SYSTEM_INFO si; GetSystemInfo(&si); return (int) si.dwPageSize; } ();
+    static int ps = [] { SYSTEM_INFO si; GetSystemInfo(&si); return (int) si.dwPageSize; } ();
     return ps;
 }
 #ifndef MADV_WILLNEED
@@ -31,9 +32,32 @@ static inline int getpagesize(void) {
 #define MADV_COLD       0x00000020
 #define MADV_FREE       0x00000008
 #endif
-static inline int madvise(void * /*addr*/, size_t /*len*/, int /*advice*/) {
-    errno = EINVAL;
-    return -1;
+static inline int madvise(void * addr, size_t len, int advice) {
+    switch (advice) {
+        case MADV_WILLNEED:
+            {
+                WIN32_MEMORY_RANGE_ENTRY range;
+                range.VirtualAddress = addr;
+                range.NumberOfBytes  = len;
+                if (!PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)) {
+                    errno = EINVAL;
+                    return -1;
+                }
+                return 0;
+            }
+        case MADV_COLD:
+        case MADV_DONTNEED:
+            // VirtualUnlock on a never-locked range trims the working set
+            // and reports ERROR_NOT_LOCKED; treat that as success
+            if (!VirtualUnlock(addr, len) && GetLastError() != ERROR_NOT_LOCKED) {
+                errno = EINVAL;
+                return -1;
+            }
+            return 0;
+        default:
+            errno = EINVAL;
+            return -1;
+    }
 }
 #else
 #include <sys/mman.h>
